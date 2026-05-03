@@ -1,0 +1,241 @@
+import requests
+import pandas as pd
+from io import StringIO
+from bs4 import BeautifulSoup
+import argparse
+import re
+
+BASE_URL = "https://en.wikipedia.org/wiki/"
+
+
+
+def clean(x):
+    text = str(x)
+    text = re.sub(r"\[.*?\]", "", text)
+    text = re.sub(r"[\^\*\†]+$", "", text) # Remove these characters
+    return text.strip()
+
+
+
+def fetch_html(url):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(url, headers=headers) # Load HTML
+    return r.text if r.status_code == 200 else None
+
+
+
+
+def get_mvp_from_list(season):
+    url = "https://en.wikipedia.org/wiki/NBA_Most_Valuable_Player_Award" # MVP Source
+
+    html = fetch_html(url)
+    if not html:
+        return None # Prevent program crash
+
+    tables = pd.read_html(StringIO(html))
+
+    target = season.split()[0] #Read by line
+
+    for df in tables:
+        df.columns = [str(c).lower() for c in df.columns]
+
+        season_col = None
+        player_col = None
+
+        for c in df.columns:
+            if "season" in c:
+                season_col = c
+            if "player" in c or "winner" in c: # Keywords for MVP
+                player_col = c
+
+        if season_col and player_col:
+            for _, row in df.iterrows():
+                if target in str(row[season_col]):
+                    return clean(row[player_col]).split("(")[0].strip() # Cleans and returns player
+
+    return None
+
+
+def get_yearly_awards_table(html):
+    soup = BeautifulSoup(html, "html.parser")
+
+    header = soup.find(id="Yearly_awards") #Find location of data
+    if not header:
+        header = soup.find(lambda t: t.name in ["h2", "h3"] and "Yearly awards" in t.text)
+
+    if not header:
+        return None
+
+    tables = header.find_all_next("table", {"class": "wikitable"}, limit=10)
+
+    for table in tables:
+        df = pd.read_html(StringIO(str(table)))[0]
+        df.columns = [str(c).lower() for c in df.columns]
+
+        text = df.astype(str).to_string().lower()
+
+        if "award" in text and "most valuable player" in text: # Locate particular awards
+            return df
+
+    return None
+
+
+def parse_awards(df):
+    awards = {}
+
+    df.columns = [str(c).lower() for c in df.columns]
+
+    award_col = None
+    recipient_col = None
+
+    for c in df.columns:
+        if "award" in c:
+            award_col = c
+        if "recipient" in c:
+            recipient_col = c
+
+    if award_col is None or recipient_col is None:
+        return awards
+
+    for _, row in df.iterrows():
+        try:
+            award = str(row[award_col]).lower()
+            recipient = clean(row[recipient_col])
+
+            if not recipient or "nan" in recipient.lower():
+                continue
+
+            recipient = recipient.split("(")[0].strip()
+
+            if "rookie" in award:
+                awards["ROY"] = recipient
+            elif "defensive" in award:
+                awards["DPOY"] = recipient
+            elif "sixth man" in award:
+                awards["6MOTY"] = recipient
+            elif "most improved" in award:
+                awards["MIP"] = recipient
+
+        except:
+            continue
+
+    return awards
+
+
+
+
+def get_nfl_mvp(season):
+    url = "https://en.wikipedia.org/wiki/AP_NFL_Most_Valuable_Player"
+
+    html = fetch_html(url)
+    if not html:
+        return "Not found"
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    year = season.split()[0]
+    text = soup.get_text(" ", strip=True) # Same logic as NBA, but for NFL
+    text = re.sub(r"\s+", " ", text)
+
+    pattern = rf"{year}.*?([A-Z][a-z]+(?:\s[A-Z][a-z]+){{0,2}})"
+
+    match = re.search(pattern, text)
+
+    if match:
+        return match.group(1).split("(")[0].strip()
+
+    return "Not found"
+
+
+def scrape_nfl(season):
+    url = BASE_URL + season.replace(" ", "_")
+
+    print("\n🔗 URL:", url)
+
+    html = fetch_html(url)
+    if not html:
+        print("Failed to load page")
+        return
+
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table", {"class": "wikitable"})
+
+    awards = {}
+
+    for table in tables:
+        try:
+            df = pd.read_html(StringIO(str(table)))[0]
+            df.columns = [str(c).lower() for c in df.columns]
+
+            for _, row in df.iterrows():
+                row_text = " ".join(str(x).lower() for x in row.values)
+
+                if "offensive rookie of the year" in row_text:
+                    awards["OROY"] = clean(row.iloc[1])
+
+                if "defensive rookie of the year" in row_text:
+                    awards["DROY"] = clean(row.iloc[1])
+
+                
+
+        except:
+            continue
+
+    mvp = get_nfl_mvp(season)
+
+    print("\n🏈 NFL SEASON SUMMARY\n")
+    print("🏆 MVP:", mvp)
+    print("🆕 Offensive Rookie of the Year:", awards.get("OROY", "Not found"))
+    print("🛡 Defensive Rookie of the Year:", awards.get("DROY", "Not found")) #Display NFL Summary
+    
+
+
+
+
+def scrape_nba(season):
+    url = BASE_URL + season.replace(" ", "_")
+
+    print("\n🔗 URL:", url)
+
+    html = fetch_html(url)
+    if not html:
+        print("Failed to load page")
+        return
+
+    df = get_yearly_awards_table(html)
+
+    if df is None:
+        print("Yearly awards table not found")
+        return
+
+    awards = parse_awards(df)
+
+    mvp = get_mvp_from_list(season)
+
+    print("\n🏀 NBA REGULAR SEASON SUMMARY\n") # Display NBA Summary
+
+    print("🏆 MVP:", mvp if mvp else "Not found")
+    print("🆕 Rookie of the Year:", awards.get("ROY", "Not found"))
+    print("🛡 Defensive Player of the Year:", awards.get("DPOY", "Not found"))
+    print("🎯 Sixth Man of the Year:", awards.get("6MOTY", "Not found"))
+    print("📈 Most Improved Player:", awards.get("MIP", "Not found"))
+
+
+# CLI
+
+def main(): #CLI arguments
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--league", choices=["nba", "nfl"], required=True)
+    parser.add_argument("--season", required=True)
+
+    args = parser.parse_args()
+
+    if args.league == "nba":
+        scrape_nba(args.season)
+    else:
+        scrape_nfl(args.season)
+
+
+if __name__ == "__main__":
+    main()
