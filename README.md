@@ -23,7 +23,7 @@ A Python CLI tool that scrapes NBA and NFL award data from Wikipedia.
 * pip install requests pandas beautifulsoup4 lxml
 
 ## Arguments
-* This program uses command line arguments: --league (NBA/NFL) -- season (example formats: 2023-24 (for NBA, XXXX-XX NBA Season), 2024 (for NFL (XXXX NFL Season)
+* This program uses command line arguments: --league (NBA/NFL) -- season (example formats: 2023-24 (for NBA, XXXX-XX NBA season), 2024 (for NFL (XXXX NFL season)
 
 ##  Usage
 
